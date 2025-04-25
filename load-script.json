@@ -1,0 +1,12 @@
+{
+  "name": "load-gen",
+  "baseUrl": "http://localhost:5173",
+  "actions": [
+    { 
+      "name": "purchases", 
+      "script": "actions/purchase-journey.js", 
+      "workers": 4, 
+      "delayFactor": 200 
+    }
+  ]
+}

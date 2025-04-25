@@ -1,0 +1,7 @@
+{
+  "name": "load-gen-zurelia",
+  "baseUrl": "https://zurelia.honeydemo.io",
+  "actions": [
+    { "name": "purchases", "script": "actions/purchase-journey.js", "workers": 1, "delayFactor": 2000 }
+  ]
+}

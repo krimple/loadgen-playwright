@@ -1,0 +1,26 @@
+{
+  "name": "load-gen-with-playwright",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "load": "tsc && node dist/scripts/runner.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@opentelemetry/auto-instrumentations-node": "^0.57.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.200.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "^0.200.0",
+    "@opentelemetry/sdk-node": "^0.200.0",
+    "@opentelemetry/sdk-trace-base": "^2.0.0",
+    "@opentelemetry/tracing": "^0.24.0",
+    "@playwright/test": "^1.51.1",
+    "dotenv": "^16.4.7",
+    "typescript": "^5.8.2"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.2"
+  }
+}
