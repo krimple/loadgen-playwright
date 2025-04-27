@@ -1,5 +1,5 @@
 import { Span, SpanStatusCode } from "@opentelemetry/api";
-import { BASE_URL } from "./configuration";
+import { BASE_URL } from "../configuration";
 import {
   Browser,
   BrowserContext,
@@ -10,7 +10,7 @@ import {
 
 export async function getBrowserInstance(span: Span, browserType: BrowserType) {
   span.setAttribute("app.browser", browserType.name());
-  const browser = await browserType.launch({ headless: true });
+  const browser = await browserType.launch({ headless: true, env: { } });
   const context = await browser.newContext();
   const page = await context.newPage();
   return { browser, context, page };
@@ -21,7 +21,6 @@ export async function releaseBrowserInstance(
   context: BrowserContext,
   browser: Browser,
 ) {
-  await page.close();
   await context.close();
   await browser.close();
 }
@@ -32,7 +31,7 @@ export function reportError(error: any, span: Span) {
   span.recordException(normalizedError);
   span.setStatus({
     code: SpanStatusCode.ERROR,
-    message: `Failed purchase: ${normalizedError.message}`,
+    message: `${normalizedError.message}`,
   });
 }
 
@@ -49,6 +48,11 @@ export async function randomTimeout(span: Span, baseMs: number) {
   return new Promise((resolve) => setTimeout(resolve, delay));
 }
 
+export async function waitForMS(span: Span, delay: number) {
+  span.setAttribute("app.timeout", delay);
+  return new Promise((resolve) => setTimeout(resolve, delay));
+}
+
 export async function awaitOTLPRequest(page: Page, timeout = 10000) {
   try {
     const request = await page.waitForRequest(
@@ -59,17 +63,23 @@ export async function awaitOTLPRequest(page: Page, timeout = 10000) {
       { timeout }
     );
 
+    // console.log(JSON.stringify(JSON.parse(request.postData() || '{}'), null, 2));
+
     console.log('Observed OTLP trace export:', request.url());
   } catch {
     console.warn('No OTLP trace observed in time window.');
   }
 }
 
-export function verifyUrlPattern(page: Page, span: any, pattern: string) {
-  // Ensure we are on the root page
-  expect(page.url()).toBe(pattern);
-  span.addEvent("verified", {
-    "app.navigating.confirmation": true,
+export async function verifyNavigation(
+  page: Page,
+  span: Span,
+  urlPattern: string | RegExp,
+  timeout: number = 10000
+): Promise<void> {
+  await expect(page).toHaveURL(urlPattern, { timeout });
+  span.addEvent('navigation-change', {
+    'app.navigated.to': page.url()
   });
 }
 
@@ -97,4 +107,50 @@ export function pickRandomUSState(): string {
   } else {
     return 'CA';
   }
+}
+
+export async function clickRandomSelectorElements(
+  span: Span,
+  page: Page, 
+  selector: string, 
+  clickCount: number,
+  afterClickDelayInterval: number = 5000
+): Promise<void> {
+  const allButtonsLocator = page.locator(selector);
+  const total = await allButtonsLocator.count();
+
+  if (total < clickCount) {
+    throw new Error(`Only found ${total} elements matching "${selector}", needed ${clickCount}`);
+  }
+
+  // Create a shuffled array of unique indices
+  const indices = Array.from({ length: total }, (_, i) => i)
+    .sort(() => 0.5 - Math.random())
+    .slice(0, clickCount);
+
+  for (const i of indices) {
+    const button = allButtonsLocator.nth(i);
+    console.log('clicking on', i);
+    await Promise.all([
+      page.waitForLoadState('networkidle'),
+      button.click()
+    ]);
+  }
+
+  // delay after all clicks to let browser send OTLP
+  // await waitForMS(span, afterClickDelayInterval);
+}
+
+export async function clickSelector(
+  page: Page,
+  span: Span,
+  selector: string,
+  logAsName: string
+): Promise<void> {
+  const button = page.locator(selector);
+  await button.click();
+
+  span.addEvent('clicked', {
+    'app.clicked.event': logAsName
+  });
 }

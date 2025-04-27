@@ -4,8 +4,8 @@
   "actions": [
     { 
       "name": "purchases", 
-      "script": "actions/purchase-journey.js", 
-      "workers": 4, 
+      "script": "./scripts/purchase-journey.ts",
+      "workers": 1,
       "delayFactor": 200 
     }
   ]

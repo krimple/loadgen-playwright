@@ -1,30 +1,35 @@
 import {diag, DiagConsoleLogger, DiagLogLevel} from '@opentelemetry/api';
 import {BatchSpanProcessor} from '@opentelemetry/sdk-trace-base';
 import {NodeSDK} from '@opentelemetry/sdk-node';
-import {OTLPTraceExporter} from '@opentelemetry/exporter-trace-otlp-proto';
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import {getNodeAutoInstrumentations} from '@opentelemetry/auto-instrumentations-node';
+import { detectResources } from '@opentelemetry/resources';
+
+if (!process.env.OTEL_SERVICE_NAME || !process.env.OTEL_EXPORTER_OTLP_PROTOCOL ||
+    !process.env.OTEL_EXPORTER_OTLP_ENDPOINT || ! process.env.OTEL_EXPORTER_OTLP_HEADERS) {
+  console.log('NO CONFIG');
+  console.dir(process.env);
+  process.exit(-1);
+}
 diag.setLogger(
     new DiagConsoleLogger(),
     DiagLogLevel.DEBUG
 );
-export async function setupTracing(): Promise<NodeSDK> {
+
+export async function setupTracing(): Promise<void> {
   if (!process.env.HONEYCOMB_API_KEY) {
      return Promise.reject(new Error('no honeycomb key'));
+  } else {
+    console.log("honeycomb key found");
   }
-  const traceExporter = new OTLPTraceExporter({
-    url: "https://api.honeycomb.io/v1/traces", // US instance
-    headers: {
-      'x-honeycomb-team': process.env.HONEYCOMB_API_KEY || 'your-api-key',
-    },
-  });
-
-  const sdk: NodeSDK = new NodeSDK({
-    spanProcessors: [new BatchSpanProcessor(traceExporter)],
-
+  
+  // Create and assign the SDK instance
+  const sdk  = new NodeSDK({
+    traceExporter: new OTLPTraceExporter(), // traceExporter,
+    autoDetectResources: true,
+    // spanProcessors: [new BatchSpanProcessor(traceExporter)],
     instrumentations: [
       getNodeAutoInstrumentations({
-        // We recommend disabling fs automatic instrumentation because
-        // it can be noisy and expensive during startup
         '@opentelemetry/instrumentation-fs': {
           enabled: false,
         },
@@ -47,6 +52,4 @@ export async function setupTracing(): Promise<NodeSDK> {
     console.log('Telemetry shutdown complete');
     process.exit(0);
   });
-
-  return Promise.resolve(sdk);
 }

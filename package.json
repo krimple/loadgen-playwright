@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "load": "tsc && node dist/scripts/runner.js"
+    "load": "ts-node src/runner.ts",
+    "load:debug": "tsc && node --inspect-brk src/runner.ts"
   },
   "keywords": [],
   "author": "",

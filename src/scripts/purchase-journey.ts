@@ -6,10 +6,13 @@ import {
   getBrowserInstance,
   releaseBrowserInstance,
   reportError,
-  verifyUrlPattern,
-  addMemoryInfoToSpan, pickRandomUSState
-} from "../action-helpers";
-import {selectBrowser} from "../../utils";
+  addMemoryInfoToSpan,
+  clickRandomSelectorElements,
+  clickSelector,
+  pickRandomUSState,
+  verifyNavigation
+} from "../helpers/action-helpers";
+import {selectBrowser} from "../utils";
 
 const tracer = trace.getTracer("playwright");
 
@@ -31,7 +34,7 @@ export async function run(BASE_URL: string, delayFactor: number) {
         await awaitOTLPRequest(page);
 
         // Ensure we are on the root page
-        verifyUrlPattern(page, span, `${BASE_URL}/`);
+        await verifyNavigation(page, span, `${BASE_URL}/`);
 
         // Wait for telemetry request
         span.addEvent('verified', {
@@ -40,6 +43,7 @@ export async function run(BASE_URL: string, delayFactor: number) {
 
         const shoppingButton = page.locator('//a[text()="Shop Now"]');
         await shoppingButton.click();
+
         await awaitOTLPRequest(page);
 
         span.addEvent('clicked', {
@@ -52,68 +56,33 @@ export async function run(BASE_URL: string, delayFactor: number) {
           'app.navigated.to': page.url()
         });
 
-        // pick 4 random products
+        // pick random products
+        await clickRandomSelectorElements(span, page, 'button:has-text("Add to Cart"):not(:disabled)', 1)
 
-        const allButtonsLocator = page.locator('button:has-text("Add to Cart"):not(:disabled)');
-        const total = await allButtonsLocator.count();
-      
-        if (total < 4) {
-          throw new Error(`Only found ${total} enabled Add to Cart buttons`);
-        }
-      
-        // Create a shuffled array of unique indices
-        const indices = Array.from({ length: total }, (_, i) => i)
-          .sort(() => 0.5 - Math.random())
-          .slice(0, 4);
-       
-        for (const i of indices) {
-          const button = allButtonsLocator.nth(i);
-          console.log('clicking on', i);
-          await Promise.all([
-            page.waitForLoadState('networkidle'), // or waitForResponse / waitForSelector
-            button.click()
-          ]);
-        }
+        // wait for 0-5 seconds
+        await randomTimeout(span, 5000);
 
-        await awaitOTLPRequest(page)
+        // go to shopping cart
+        await clickSelector(page, span, '//a[text()="Cart"]', 'shopping cart');
 
-        const addToCartLocator= page.locator('//a[text()="Cart"]');
-        await addToCartLocator.click();
-
-        await awaitOTLPRequest(page)
-
-        // Confirm redirect to product page
-        await expect(page).toHaveURL(/\/cart/);
-        span.addEvent('navigation-change', {
-          'app.navigated.to': page.url()
-        });
+        // make sure we landed on the cart page
+        await verifyNavigation(page, span, /\/cart/);
 
         // // pick a random US State and fill it
         // const usState = pickRandomUSState();
         // await page.fill("input#state", usState);
 
-        // // checkout
-        // const placeOrderLocator= page.locator("button[data-cy=\'checkout-place-order\']");
-        // await placeOrderLocator.click();
+        // go to checkout
+        await clickSelector(page, span, '//button[text="Place Order"]', 'place order');
 
-        // console.log('14', placeOrderLocator, page.url())
-
-        // // I think the page does some gyrations, adding pause
+        // I think the page does some gyrations, adding pause
         // await randomTimeout(span, delayFactor);
-
-        // console.log('15', page.url())
 
         // // isn't getting the checkout url change...
 
         // // wait until we get an orderId on the URL
-        // await page.waitForURL(/\?order/);
-
-        // console.log('16', page.url())
-
-        // // nope, not complete yet
-        // span.addEvent('checkout-complete', {
-        //   'app.order.hash': page.url()
-        // });
+        await verifyNavigation(page, span, /\?order/);
+        await page.waitForURL(/\?order/);
 
         // // Final telemetry request (ignore errors)
         try {
