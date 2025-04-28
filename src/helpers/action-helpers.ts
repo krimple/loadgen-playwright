@@ -7,17 +7,42 @@ import {
   expect,
   Page, ViewportSize
 } from "@playwright/test";
+import { selectBrowser } from '../utils';
 
 const tracer = trace.getTracer("playwright");
 
+const VIEWPORT_SIZES = [
+  { width: 1024, height: 768 },
+  { width: 1920, height: 1280 },
+  { width: 3840, height: 2540 },
+  { width: 800, height: 600 }
+] as const;
 
-export async function getBrowserInstance(span: Span, browserType: BrowserType) {
-  span.setAttribute("app.browser", browserType.name());
-  const browser = await browserType.launch({ headless: true, env: { } });
-  const context = await browser.newContext();
-  const page = await context.newPage();
-  await page.setViewportSize({ width: 1920, height: 1080 });
-  return { browser, context, page };
+export function getRandomViewportSize(): ViewportSize {
+  const randomIndex = Math.floor(Math.random() * VIEWPORT_SIZES.length);
+  return VIEWPORT_SIZES[randomIndex];
+}
+
+export async function getBrowserInstance(): Promise<{ browser: Browser, context: BrowserContext, page: Page } | undefined> {
+  const browserType = selectBrowser().browser;
+  return tracer.startActiveSpan('browser-instance', async (span) => {
+    try {
+      span.setAttribute("app.browser", browserType.name());
+      const browser = await browserType.launch({headless: true, env: {}});
+      const context = await browser.newContext();
+      const page = await context.newPage();
+
+      const viewportSize = getRandomViewportSize();
+      await page.setViewportSize(viewportSize);
+      span.setAttribute("app.viewport.size", `${viewportSize.width}x${viewportSize.height}`);
+      recordBrowserCharacteristics(span, page, browser, browserType);
+      return {browser, context, page};
+    } catch (e) {
+      reportError(e, span);
+    } finally {
+      span.end();
+    }
+  });
 }
 
 export async function releaseBrowserInstance(
@@ -29,14 +54,26 @@ export async function releaseBrowserInstance(
   await browser.close();
 }
 
-export function reportError(error: any, span: Span) {
+export function reportError(error: any, span?: Span) {
   const normalizedError =
-    error instanceof Error ? error : new Error("Unknown error occurred");
-  span.recordException(normalizedError);
-  span.setStatus({
-    code: SpanStatusCode.ERROR,
-    message: `${normalizedError.message}`,
-  });
+      error instanceof Error ? error : new Error("Unknown error occurred");
+
+  if (span) {
+    span.recordException(error);
+    span.setStatus({
+      code: SpanStatusCode.ERROR,
+      message: `${normalizedError.message}`,
+    });
+  } else {
+    tracer.startActiveSpan('report-error', (span) => {
+      span.recordException(normalizedError);
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: `${normalizedError.message}`,
+      });
+      span.end();
+    })
+  }
 }
 
 function getRandomDelay(baseMs: number) {
@@ -46,9 +83,9 @@ function getRandomDelay(baseMs: number) {
   return Math.random() * (max - min) + min;
 }
 
-export async function randomTimeout(span: Span, baseMs: number) {
+export async function randomTimeout(baseMs: number) {
   const delay = getRandomDelay(baseMs);
-  span.setAttribute("app.timeout", delay);
+  // TODO span.setAttribute("app.timeout", delay);
   return new Promise((resolve) => setTimeout(resolve, delay));
 }
 
@@ -57,8 +94,9 @@ export async function waitForMS(span: Span, delay: number) {
   return new Promise((resolve) => setTimeout(resolve, delay));
 }
 
-export async function awaitOTLPRequest(page: Page, timeout = 10000) {
+export async function awaitOTLPRequest(page: Page, timeout = 5000) {
   try {
+    await page.waitForLoadState("networkidle");
     const request = await page.waitForRequest(
       (req) =>
         req.url().includes('/v1/traces') &&
@@ -134,7 +172,6 @@ export async function clickRandomSelectorElements(
   page: Page,
   selector: string, 
   clickCount: number,
-  afterClickDelayInterval: number = 5000
 ): Promise<void> {
   return tracer.startActiveSpan('click-random', async (span: Span) => {
     try {
@@ -154,8 +191,8 @@ export async function clickRandomSelectorElements(
         const button = allButtonsLocator.nth(i);
         console.log('clicking on', i);
         await Promise.all([
-          page.waitForLoadState('networkidle'),
-          button.click()
+          button.click(),
+          page.waitForResponse(new RegExp(`/api/cart/items/(\\d+)$`))
         ]);
       }
     } catch (e) {
@@ -178,6 +215,38 @@ export async function clickSelector(
       span.setAttribute("app.target", targetName);
     } catch (e) {
       reportError(e, span);
+    } finally {
+      span.end();
+    }
+  });
+}
+
+export function recordBrowserCharacteristics(
+  span: Span, 
+  page: Page, 
+  browser: Browser, 
+  browserType: BrowserType
+): void {
+  const viewportSize = page.viewportSize();
+
+  if (!viewportSize) {
+    throw new Error('no viewport size');
+  }
+
+  addMemoryInfoSpan();
+  addBrowserInfoSpan(browserType, viewportSize);
+  span.setAttributes({ "app.browser": browserType.name() }); // INSTRUMENTATION: add relevant info
+}
+
+export async function navigateToUrl(page: Page, url: string): Promise<void> {
+  return tracer.startActiveSpan('navigate', async (span: Span) => {
+    try {
+      span.addEvent('navigating', { 'app.nav-url': url });
+      await page.goto(url, { waitUntil: 'domcontentloaded' });
+      span.setAttributes({ 'app.navigation.success': true });
+    } catch (e) {
+      reportError(e, span);
+      throw e;
     } finally {
       span.end();
     }
