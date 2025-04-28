@@ -13,7 +13,7 @@ if (!process.env.OTEL_SERVICE_NAME || !process.env.OTEL_EXPORTER_OTLP_PROTOCOL |
 }
 diag.setLogger(
     new DiagConsoleLogger(),
-    DiagLogLevel.DEBUG
+    DiagLogLevel.ERROR
 );
 
 export async function setupTracing(): Promise<void> {

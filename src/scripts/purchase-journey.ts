@@ -6,11 +6,11 @@ import {
   getBrowserInstance,
   releaseBrowserInstance,
   reportError,
-  addMemoryInfoToSpan,
+  addMemoryInfoSpan,
   clickRandomSelectorElements,
   clickSelector,
   pickRandomUSState,
-  verifyNavigation
+  verifyLocation, addBrowserInfoSpan
 } from "../helpers/action-helpers";
 import {selectBrowser} from "../utils";
 
@@ -23,23 +23,34 @@ export async function run(BASE_URL: string, delayFactor: number) {
   return new Promise<void>(async (resolve, reject) => {
     return tracer.startActiveSpan('purchase-journey', async (span: Span): Promise<void> => {
       const {browser, context, page} = await getBrowserInstance(span, browserType);
-      addMemoryInfoToSpan(span);
+      if (!page || !browser || !context) {
+        return reject('no browser');
+      }
+
+      const viewportSize = page.viewportSize();
+
+      if (!viewportSize) {
+        return reject('no viewport size');
+      }
+
+      addMemoryInfoSpan();
+
+      addBrowserInfoSpan(browserType, viewportSize);
+
       span.setAttributes({ "app.browser": browserType.name() }); // INSTRUMENTATION: add relevant info
       try {
+        // stagger scripts:  wait for 0-10 seconds
+        await randomTimeout(span, 10000);
+
         span.addEvent('navigating', { 'app.nav-url': BASE_URL });
 
         await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' });
 
         // Wait for telemetry request
-        await awaitOTLPRequest(page);
+        await awaitOTLPRequest(page,2000);
 
         // Ensure we are on the root page
-        await verifyNavigation(page, span, `${BASE_URL}/`);
-
-        // Wait for telemetry request
-        span.addEvent('verified', {
-          'app.navigating.confirmation': true
-        });
+        await verifyLocation(page, `${BASE_URL}/`);
 
         const shoppingButton = page.locator('//a[text()="Shop Now"]');
         await shoppingButton.click();
@@ -51,29 +62,30 @@ export async function run(BASE_URL: string, delayFactor: number) {
         });
 
         // Confirm redirect to product page
-        await expect(page).toHaveURL(/\/products/);
-        span.addEvent('navigation-change', {
-          'app.navigated.to': page.url()
-        });
+        await verifyLocation(page, /\/products/);
 
         // pick random products
-        await clickRandomSelectorElements(span, page, 'button:has-text("Add to Cart"):not(:disabled)', 1)
+        await clickRandomSelectorElements(page, 'button:has-text("Add to Cart"):not(:disabled)', 4)
 
-        // wait for 0-5 seconds
-        await randomTimeout(span, 5000);
+        // wait for up to .5 seconds
+        await randomTimeout(span, 500);
 
         // go to shopping cart
-        await clickSelector(page, span, '//a[text()="Cart"]', 'shopping cart');
+        // await clickSelector(page, '//a[text()="Cart"]', 'shopping-cart');
+        await clickSelector(page, 'a:has-text("Cart")', 'shopping-cart');
 
         // make sure we landed on the cart page
-        await verifyNavigation(page, span, /\/cart/);
+        await verifyLocation(page, /\/cart/);
 
         // // pick a random US State and fill it
         // const usState = pickRandomUSState();
         // await page.fill("input#state", usState);
 
         // go to checkout
-        await clickSelector(page, span, '//button[text="Place Order"]', 'place order');
+        await clickSelector(page, 'a:has-text("Proceed to Checkout")', 'place-order');
+
+        // place order with default fields
+        await clickSelector(page, 'button:has-text("Place Order")', 'place-order');
 
         // I think the page does some gyrations, adding pause
         // await randomTimeout(span, delayFactor);
@@ -81,8 +93,8 @@ export async function run(BASE_URL: string, delayFactor: number) {
         // // isn't getting the checkout url change...
 
         // // wait until we get an orderId on the URL
-        await verifyNavigation(page, span, /\?order/);
-        await page.waitForURL(/\?order/);
+        await verifyLocation(page, /\//);
+        await page.waitForURL(/\//);
 
         // // Final telemetry request (ignore errors)
         try {

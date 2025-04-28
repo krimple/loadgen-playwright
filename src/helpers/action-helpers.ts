@@ -1,18 +1,22 @@
-import { Span, SpanStatusCode } from "@opentelemetry/api";
+import { Span, SpanStatusCode, trace } from "@opentelemetry/api";
 import { BASE_URL } from "../configuration";
 import {
   Browser,
   BrowserContext,
   BrowserType,
   expect,
-  Page,
+  Page, ViewportSize
 } from "@playwright/test";
+
+const tracer = trace.getTracer("playwright");
+
 
 export async function getBrowserInstance(span: Span, browserType: BrowserType) {
   span.setAttribute("app.browser", browserType.name());
   const browser = await browserType.launch({ headless: true, env: { } });
   const context = await browser.newContext();
   const page = await context.newPage();
+  await page.setViewportSize({ width: 1920, height: 1080 });
   return { browser, context, page };
 }
 
@@ -71,19 +75,26 @@ export async function awaitOTLPRequest(page: Page, timeout = 10000) {
   }
 }
 
-export async function verifyNavigation(
+export async function verifyLocation(
   page: Page,
-  span: Span,
   urlPattern: string | RegExp,
   timeout: number = 10000
 ): Promise<void> {
-  await expect(page).toHaveURL(urlPattern, { timeout });
-  span.addEvent('navigation-change', {
-    'app.navigated.to': page.url()
+  return tracer.startActiveSpan('verify-navigation', async (span: Span) => {
+    try {
+      await page.waitForURL(urlPattern, {timeout});
+      span.setAttribute('app.navigated.to', page.url());
+    } catch (e) {
+      reportError(e, span);
+    } finally {
+      span.end();
+    }
   });
 }
 
-export function addMemoryInfoToSpan(span: Span) {
+export function addMemoryInfoSpan() {
+  const span = tracer.startSpan('script-memory-usage');
+
   const memInfo = process.memoryUsage();
   const availableMemory = process.availableMemory();
   const usedMemory = process.constrainedMemory();
@@ -95,6 +106,16 @@ export function addMemoryInfoToSpan(span: Span) {
   span.setAttribute("app.memory.heapUsed", memInfo.heapUsed);
   span.setAttribute("app.memory.available", availableMemory);
   span.setAttribute("app.memory.used", usedMemory);
+  span.end();
+}
+
+export function addBrowserInfoSpan(browserType: BrowserType, viewPortSize?: {width: number, height: number}|undefined) {
+  const span = tracer.startSpan('browser-info');
+  span.setAttributes({ "app.browser": browserType.name() }); // INSTRUMENTATION: add relevant info
+  if (viewPortSize) {
+    span.setAttributes({"app.browser.viewport": JSON.stringify(viewPortSize)}); // INSTRUMENTATION: add relevant info
+  }
+  span.end();
 }
 
 const usStateSubset = ['PA', 'NJ', 'ID', 'NM', 'CO', 'CA', 'DE', 'OR', 'WA', 'MS', 'KA'];
@@ -110,47 +131,55 @@ export function pickRandomUSState(): string {
 }
 
 export async function clickRandomSelectorElements(
-  span: Span,
-  page: Page, 
+  page: Page,
   selector: string, 
   clickCount: number,
   afterClickDelayInterval: number = 5000
 ): Promise<void> {
-  const allButtonsLocator = page.locator(selector);
-  const total = await allButtonsLocator.count();
+  return tracer.startActiveSpan('click-random', async (span: Span) => {
+    try {
+      span.setAttribute("app.selector", selector);
+      const allButtonsLocator = page.locator(selector);
+      const total = await allButtonsLocator.count();
+      span.setAttribute("app.selector.count", total);
 
-  if (total < clickCount) {
-    throw new Error(`Only found ${total} elements matching "${selector}", needed ${clickCount}`);
-  }
-
-  // Create a shuffled array of unique indices
-  const indices = Array.from({ length: total }, (_, i) => i)
-    .sort(() => 0.5 - Math.random())
-    .slice(0, clickCount);
-
-  for (const i of indices) {
-    const button = allButtonsLocator.nth(i);
-    console.log('clicking on', i);
-    await Promise.all([
-      page.waitForLoadState('networkidle'),
-      button.click()
-    ]);
-  }
-
-  // delay after all clicks to let browser send OTLP
-  // await waitForMS(span, afterClickDelayInterval);
+      if (total < clickCount) {
+        throw new Error(`Only found ${total} elements matching "${selector}", needed ${clickCount}`);
+      }
+      // Create a shuffled array of unique indices
+      const indices = Array.from({length: total}, (_, i) => i)
+          .sort(() => 0.5 - Math.random())
+          .slice(0, clickCount);
+      for (const i of indices) {
+        const button = allButtonsLocator.nth(i);
+        console.log('clicking on', i);
+        await Promise.all([
+          page.waitForLoadState('networkidle'),
+          button.click()
+        ]);
+      }
+    } catch (e) {
+      reportError(e, span);
+    } finally {
+      span.end();
+    }
+  });
 }
 
 export async function clickSelector(
   page: Page,
-  span: Span,
   selector: string,
-  logAsName: string
+  targetName: string
 ): Promise<void> {
-  const button = page.locator(selector);
-  await button.click();
-
-  span.addEvent('clicked', {
-    'app.clicked.event': logAsName
+  return tracer.startActiveSpan('click', async (span: Span) => {
+    try {
+      await page.click(selector);
+      span.setAttribute("app.selector", selector);
+      span.setAttribute("app.target", targetName);
+    } catch (e) {
+      reportError(e, span);
+    } finally {
+      span.end();
+    }
   });
 }
