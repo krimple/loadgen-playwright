@@ -7,13 +7,38 @@ This is not ready for production in any way, still need to pull out helper metho
 1. `npm install`
 2. Copy `.env-sample` to `.env` and set proper Honeycomb API Key, change service name
 
+## To make your own tests
+
+* Edit `load-script.json` to point to a script fashioned after `scripts/purchase-journey.ts`
+* Add helpers to `helpers/action-helpers.ts` as needed
+
+This is really not that novel, but it was useful for generating some load for me.
+
+## Tips
+
+* Use `page.pause()` to debug the page - couple it with setting `headless` to false in the helper so you can see your browsers when they execute
+* Use `page.screenshot()` to capture screenshots of failures
+
 ## TO Run:
+
+for a single process looping infinitely
 
 ```
 npm run load
 ```
 
-## Other options
+to generate some real load, install pm2:
 
-* Artillery with playwright runner - this didn't work for me
-* Playwright runner config, kept getting "flaky" test results
+```
+brew install pm2
+or
+npm install -g pm2
+```
+
+and use:
+
+```
+pm2 start ./run.sh --name loadgen -i <number of processes>
+# then kill it later with
+pm2 kill
+```
